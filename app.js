@@ -1,4 +1,4 @@
-/* Plakat-splitter – deler et bilde eller en PDF opp i ark for utskrift.
+/* Tileprint – deler et bilde eller en PDF opp i ark for utskrift.
  * Alt kjører i nettleseren. Mål internt er i millimeter, origo øverst til venstre på arket.
  * Den samme layout-funksjonen (sheetLayout) brukes både av forhåndsvisningen (canvas)
  * og av PDF-eksporten, slik at de alltid viser det samme. */
@@ -874,8 +874,8 @@
     const doc = await PDFLib.PDFDocument.create();
     const base = src.name.replace(/\.[^.]+$/, '');
     doc.setTitle(`${base} – plakat ${g.cols}×${g.rows}`);
-    doc.setCreator('Plakat-splitter');
-    doc.setProducer('Plakat-splitter (pdf-lib)');
+    doc.setCreator('Tileprint');
+    doc.setProducer('Tileprint (pdf-lib)');
     onProgress('Bygger inn bildet …');
     const source = await embedSource(doc, src, PDFLib);
     const font = await doc.embedFont(PDFLib.StandardFonts.Helvetica);
@@ -945,7 +945,7 @@
     try {
       const PDFLib = await getPdfLib();
       const doc = await PDFLib.PDFDocument.create();
-      doc.setTitle('Testark – Plakat-splitter');
+      doc.setTitle('Testark – Tileprint');
       const font = await doc.embedFont(PDFLib.StandardFonts.Helvetica);
       const bold = await doc.embedFont(PDFLib.StandardFonts.HelveticaBold);
       const paper = paperDims(state.settings, 'portrait');
