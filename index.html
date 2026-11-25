@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="nb">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Plakat-splitter</title>
+  <meta name="description" content="Del et stort bilde eller en PDF opp i A4-ark som kan skrives ut hjemme og limes sammen til en plakat. Alt skjer i nettleseren.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect x='1' y='1' width='6' height='6' fill='%23356'/%3E%3Crect x='9' y='1' width='6' height='6' fill='%23589'/%3E%3Crect x='1' y='9' width='6' height='6' fill='%23589'/%3E%3Crect x='9' y='9' width='6' height='6' fill='%23356'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <div class="wrap">
+      <h1>Plakat-splitter</h1>
+      <p class="lede">Del et stort bilde eller en PDF opp i ark som kan skrives ut på en vanlig skriver og limes sammen til en plakat. Alt skjer i nettleseren din – filen lastes ikke opp noe sted.</p>
+    </div>
+  </header>
+
+  <main class="wrap layout">
+    <aside class="panel" aria-label="Innstillinger">
+      <section class="group">
+        <h2><span class="step">1</span> Fil</h2>
+        <label class="drop" id="drop">
+          <input type="file" id="file" accept=".png,.jpg,.jpeg,.webp,.pdf,image/png,image/jpeg,image/webp,application/pdf">
+          <span class="drop-main">Velg bilde eller PDF</span>
+          <span class="drop-sub">eller dra filen hit · PNG, JPG, WebP, PDF (første side)</span>
+        </label>
+        <div id="fileInfo" class="file-info" hidden></div>
+        <ul id="warnings" class="warnings" hidden></ul>
+      </section>
+
+      <section class="group">
+        <h2><span class="step">2</span> Papir</h2>
+        <div class="row">
+          <label class="field">
+            <span>Papirstørrelse</span>
+            <select id="paper">
+              <option value="A4">A4 (210 × 297 mm)</option>
+              <option value="A3">A3 (297 × 420 mm)</option>
+              <option value="Letter">Letter (216 × 279 mm)</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Retning</span>
+            <select id="orient">
+              <option value="auto">Automatisk</option>
+              <option value="portrait">Stående</option>
+              <option value="landscape">Liggende</option>
+            </select>
+          </label>
+        </div>
+        <label class="field">
+          <span>Utskriftsmarg (mm)</span>
+          <input type="number" id="margin" min="0" max="30" step="0.5" inputmode="decimal">
+          <small>De fleste hjemmeskrivere klarer ikke å skrive helt ut til kanten. 5–7 mm er vanlig.</small>
+        </label>
+        <label class="check"><input type="checkbox" id="borderless"> Kant til kant (uten marg)</label>
+        <small id="borderlessHint" hidden>For skrivere med kantløs utskrift. Velg kantløs papirstørrelse og fotopapir i skriverdialogen, og slå av forstørrelse («Behold størrelse» / minste utvidelse). Da trenger du ikke klippe: legg arkene rett over overlappen. Skriv ut testarket først.</small>
+      </section>
+
+      <section class="group">
+        <h2><span class="step">3</span> Størrelse</h2>
+        <div class="seg" role="radiogroup" aria-label="Velg hvordan størrelsen bestemmes">
+          <label><input type="radio" name="mode" value="grid"><span>Antall ark</span></label>
+          <label><input type="radio" name="mode" value="size"><span>Mål i cm</span></label>
+        </div>
+        <div id="gridFields" class="row">
+          <label class="field">
+            <span>Kolonner</span>
+            <input type="number" id="cols" min="1" max="30" step="1" inputmode="numeric">
+          </label>
+          <label class="field">
+            <span>Rader</span>
+            <input type="number" id="rows" min="1" max="30" step="1" inputmode="numeric">
+          </label>
+        </div>
+        <button type="button" id="fitRows" class="link-btn">Velg rader automatisk ut fra bildet</button>
+        <div id="sizeFields" class="row" hidden>
+          <label class="field">
+            <span>Bredde (cm)</span>
+            <input type="number" id="widthCm" min="5" max="2000" step="0.1" inputmode="decimal">
+          </label>
+          <label class="field">
+            <span>Høyde (cm)</span>
+            <input type="number" id="heightCm" min="5" max="2000" step="0.1" inputmode="decimal">
+          </label>
+        </div>
+        <small id="sizeHint" hidden>Fyll inn den ene – den andre regnes ut fra bildets proporsjoner.</small>
+      </section>
+
+      <section class="group">
+        <h2><span class="step">4</span> Overlapp og merker</h2>
+        <label class="field">
+          <span>Overlapp (mm)</span>
+          <input type="number" id="overlap" min="0" max="50" step="0.5" inputmode="decimal">
+        </label>
+        <fieldset class="edges">
+          <legend>Kanter med overlapp</legend>
+          <label><input type="checkbox" id="edgeTop"> Topp</label>
+          <label><input type="checkbox" id="edgeRight"> Høyre</label>
+          <label><input type="checkbox" id="edgeBottom"> Bunn</label>
+          <label><input type="checkbox" id="edgeLeft"> Venstre</label>
+        </fieldset>
+        <small>Overlappsfeltet gjentar en stripe av nabo-arket og blir liggende under det når du limer.</small>
+        <label class="check"><input type="checkbox" id="cropMarks"> Klippemerker i margen</label>
+        <label class="check"><input type="checkbox" id="labels"> Arknummer og koordinater (f.eks. «B3 · ark 8 av 12»)</label>
+        <label class="check"><input type="checkbox" id="overview"> Legg til oversiktsside til slutt</label>
+      </section>
+
+      <section class="group export">
+        <button type="button" id="exportBtn" class="primary" disabled>Lag PDF</button>
+        <p id="status" class="status" role="status" aria-live="polite"></p>
+        <p class="hint"><strong>Skriv ut med «Faktisk størrelse» / 100 %</strong> – ikke «Tilpass til side», ellers blir målene feil.</p>
+        <button type="button" id="testSheetBtn" class="link-btn">Last ned testark (sjekk skala og kanter)</button>
+        <button type="button" id="resetBtn" class="link-btn">Tilbakestill innstillinger</button>
+      </section>
+    </aside>
+
+    <section class="preview" aria-label="Forhåndsvisning">
+      <div id="summary" class="summary"></div>
+      <div id="error" class="error" hidden></div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>Plakat</h2>
+          <span class="muted">Klikk på et ark for å se det</span>
+        </div>
+        <div id="posterBox" class="canvas-box">
+          <canvas id="posterCanvas" aria-label="Rutenett over plakaten"></canvas>
+          <div id="emptyState" class="empty">Last opp et bilde eller en PDF for å se rutenettet.</div>
+        </div>
+      </div>
+
+      <div class="card" id="sheetCard" hidden>
+        <div class="card-head">
+          <h2 id="sheetTitle">Ark</h2>
+          <div class="nav">
+            <button type="button" id="prevSheet" aria-label="Forrige ark">‹</button>
+            <button type="button" id="nextSheet" aria-label="Neste ark">›</button>
+          </div>
+        </div>
+        <div id="sheetBox" class="canvas-box sheet-box">
+          <canvas id="sheetCanvas" aria-label="Forhåndsvisning av ett ark"></canvas>
+        </div>
+        <ul class="legend">
+          <li><span class="sw sw-overlap"></span> Overlapp – dekkes av nabo-arket (bare i forhåndsvisningen)</li>
+          <li><span class="sw sw-margin"></span> Utskriftsmarg (bare i forhåndsvisningen)</li>
+        </ul>
+        <details class="howto">
+          <summary>Slik setter du sammen plakaten</summary>
+          <ol>
+            <li>Skriv ut PDF-en med «Faktisk størrelse» (100 %).</li>
+            <li>På kantene <em>uten</em> overlapp: klipp bort margen langs klippemerkene.</li>
+            <li>Legg det klipte arket over nabo-arkets overlappsfelt slik at bildet passer, og lim.</li>
+            <li>Bruk koordinatene (A1, B1, …) for å holde orden: bokstav er kolonne, tall er rad.</li>
+          </ol>
+        </details>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
