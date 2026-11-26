@@ -624,6 +624,108 @@
     return ops;
   }
 
+  /**
+   * Tosidig testark. Side 1 (forside) har fem målepunkter med skalaer, side 2 (bakside)
+   * har et kraftig kryss på de samme punktene. Punktene ligger symmetrisk, så kryssene
+   * havner bak skalaene uansett om skriveren snur arket om langsiden eller kortsiden.
+   * Holdt mot lyset viser skalaene hvor mye baksiden er forskjøvet, sett fra forsiden.
+   */
+  function duplexTargets(paper) {
+    const a = 32;
+    return [
+      { id: 'M', x: paper.w / 2, y: paper.h / 2 },
+      { id: '1', x: a, y: a },
+      { id: '2', x: paper.w - a, y: a },
+      { id: '3', x: a, y: paper.h - a },
+      { id: '4', x: paper.w - a, y: paper.h - a },
+    ];
+  }
+
+  function arrowUp(ops, x, yTop, len, w = 0.6) {
+    ops.push({ t: 'line', x1: x, y1: yTop, x2: x, y2: yTop + len, w, color: BLACK });
+    ops.push({ t: 'line', x1: x, y1: yTop, x2: x - len * 0.28, y2: yTop + len * 0.32, w, color: BLACK });
+    ops.push({ t: 'line', x1: x, y1: yTop, x2: x + len * 0.28, y2: yTop + len * 0.32, w, color: BLACK });
+  }
+
+  function duplexTestLayout(paper, s, side) {
+    const ops = [];
+    const cx = paper.w / 2;
+    const targets = duplexTargets(paper);
+    const heading = (text, y) => {
+      const sz = 7;
+      const tw = estimateTextWidth(text, sz, true);
+      ops.push({ t: 'text', text, x: cx - tw / 2, y, sizeMm: sz, bold: true, color: BLACK });
+    };
+
+    if (side === 'back') {
+      for (const tg of targets) {
+        ops.push({ t: 'line', x1: tg.x - 20, y1: tg.y, x2: tg.x + 20, y2: tg.y, w: 0.35, color: BLACK });
+        ops.push({ t: 'line', x1: tg.x, y1: tg.y - 20, x2: tg.x, y2: tg.y + 20, w: 0.35, color: BLACK });
+      }
+      arrowUp(ops, cx, 50, 18, 0.8);
+      ops.push({ t: 'text', text: 'TOPP', x: cx - estimateTextWidth('TOPP', 4, true) / 2, y: 76, sizeMm: 4, bold: true, color: BLACK });
+      heading('BAKSIDE', 92);
+      const lines = [
+        'Kryssene skal sees gjennom arket fra forsiden.',
+        'Står denne teksten opp ned når du blar arket som en bok, snur skriveren arket om kortsiden.',
+      ];
+      lines.forEach((text, i) => ops.push({
+        t: 'text', text, x: cx - estimateTextWidth(text, 2.7) / 2, y: 102 + i * 4.6, sizeMm: 2.7, color: GREY,
+      }));
+      return ops;
+    }
+
+    // Forside: skalaer rundt hvert punkt. Positive tall = baksiden ligger til høyre / lenger ned.
+    const step = 0.5;
+    const n = 12; // ±6 mm
+    const lw = 0.12;
+    const lsz = 1.6;
+    const off = 9; // skalaene ligger så langt fra punktet at de ikke krysser hverandre
+    for (const tg of targets) {
+      for (let k = -n; k <= n; k++) {
+        const d = k * step;
+        const whole = d % 1 === 0;
+        const len = k === 0 ? 4 : whole ? 2.6 : 1.4;
+        const w = k === 0 ? 0.25 : lw;
+        // Vannrett skala (sideforskyvning): loddrette streker over punktet
+        ops.push({ t: 'line', x1: tg.x + d, y1: tg.y - off, x2: tg.x + d, y2: tg.y - off - len, w, color: BLACK });
+        // Loddrett skala (høydeforskyvning): vannrette streker til høyre for punktet
+        ops.push({ t: 'line', x1: tg.x + off, y1: tg.y + d, x2: tg.x + off + len, y2: tg.y + d, w, color: BLACK });
+        if (whole && d % 2 === 0) {
+          const t = d > 0 ? `+${d}` : `${d}`;
+          const tw = estimateTextWidth(t, lsz);
+          ops.push({ t: 'text', text: t, x: tg.x + d - tw / 2, y: tg.y - off - 4 - 0.8, sizeMm: lsz, color: BLACK });
+          ops.push({ t: 'text', text: t, x: tg.x + off + 4 + 0.8, y: tg.y + d + lsz * 0.36, sizeMm: lsz, color: BLACK });
+        }
+      }
+      ops.push({ t: 'line', x1: tg.x, y1: tg.y - off, x2: tg.x, y2: tg.y - 2, w: 0.08, color: GREY });
+      ops.push({ t: 'line', x1: tg.x + 2, y1: tg.y, x2: tg.x + off, y2: tg.y, w: 0.08, color: GREY });
+      ops.push({ t: 'text', text: tg.id, x: tg.x - 6, y: tg.y + 6, sizeMm: 3, bold: true, color: GREY });
+    }
+
+    arrowUp(ops, cx, 50, 18, 0.8);
+    ops.push({ t: 'text', text: 'TOPP', x: cx - estimateTextWidth('TOPP', 4, true) / 2, y: 76, sizeMm: 4, bold: true, color: BLACK });
+    heading('FORSIDE', 92);
+    const intro = `Tosidig testark · ${PAPERS[s.paper].name} · skriv ut med «Faktisk størrelse» / 100 %`;
+    ops.push({ t: 'text', text: intro, x: cx - estimateTextWidth(intro, 2.7, true) / 2, y: 102, sizeMm: 2.7, bold: true, color: BLACK });
+
+    const lines = [
+      'Slik gjør du:',
+      '1. Skriv ut begge sidene på ett ark, enten med automatisk tosidig utskrift, eller manuelt:',
+      '   skriv ut side 1, legg arket tilbake i skuffen og skriv ut side 2. Noter hvordan du la det inn.',
+      '2. Bla arket som en bok (snu det om den lange kanten). Står BAKSIDE med TOPP oppover?',
+      '   Ja = langside. Opp ned = skriveren snur om kortsiden.',
+      '3. Hold arket mot et vindu med forsiden mot deg. Les av ved punkt M hvor krysset fra baksiden',
+      '   treffer skalaene: den øverste skalaen gir mm til siden (+ = høyre), den høyre gir mm',
+      '   i høyden (+ = ned). Gjør det samme ved punkt 1–4 hvis du vil sjekke om baksiden er skjev.',
+      '4. Send tallene videre, så lages resten.',
+    ];
+    lines.forEach((text, i) => ops.push({
+      t: 'text', text, x: 24, y: 185 + i * 4.6, sizeMm: 2.7, bold: i === 0, color: i === 0 ? BLACK : GREY,
+    }));
+    return ops;
+  }
+
   // ---------- Tegning på canvas (forhåndsvisning) ----------
 
   const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -1069,6 +1171,44 @@
     }
   }
 
+  async function buildDuplexTestPdf(s) {
+    const PDFLib = await getPdfLib();
+    const doc = await PDFLib.PDFDocument.create();
+    doc.setTitle('Tosidig testark – Tileprint');
+    doc.setCreator('Tileprint');
+    const font = await doc.embedFont(PDFLib.StandardFonts.Helvetica);
+    const bold = await doc.embedFont(PDFLib.StandardFonts.HelveticaBold);
+    const paper = paperDims(s, 'portrait');
+    const cal = calibFor(s, 'portrait');
+    const comp = cal ? { kx: 1 / cal.sx, ky: 1 / cal.sy } : null;
+    for (const side of ['front', 'back']) {
+      const page = doc.addPage([paper.w * MM_TO_PT, paper.h * MM_TO_PT]);
+      drawOpsPdf(page, safeText(duplexTestLayout(paper, s, side)), { PDFLib, source: null, font, bold, comp });
+    }
+    return doc.save();
+  }
+
+  async function exportDuplexTest() {
+    if (state.busy) return;
+    state.busy = true;
+    refreshExportButton();
+    showError(null);
+    try {
+      const bytes = await buildDuplexTestPdf(state.settings);
+      const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `testark-tosidig-${PAPERS[state.settings.paper].name}.pdf`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (err) {
+      showError(`Klarte ikke å lage det tosidige testarket: ${err.message || err}`);
+    } finally {
+      state.busy = false;
+      refreshExportButton();
+    }
+  }
+
   function clearDownload() {
     if (state.downloadUrl) {
       URL.revokeObjectURL(state.downloadUrl);
@@ -1370,6 +1510,7 @@
     }
     on('borderless', 'change', (e) => { s.borderless = e.target.checked; changed(); });
     on('testSheetBtn', 'click', exportTestSheet);
+    on('duplexTestBtn', 'click', exportDuplexTest);
     on('calApply', 'click', applyCalibration);
     on('calClear', 'click', () => {
       delete s.calibrations[calKey(s)];
@@ -1440,7 +1581,7 @@
   }
 
   // Eksponert for testing i nettleserkonsollen.
-  window.PlakatSplitter = { applyCalibration, calibFor, testSheetLayout, drawOpsPdf, safeText, getPdfLib, computeGeometry, sheetLayout, overviewLayout, orientMatrix, jpegOrientation, buildPdf, state };
+  window.PlakatSplitter = { buildDuplexTestPdf, duplexTargets, applyCalibration, calibFor, testSheetLayout, drawOpsPdf, safeText, getPdfLib, computeGeometry, sheetLayout, overviewLayout, orientMatrix, jpegOrientation, buildPdf, state };
 
   writeInputs();
   bindInputs();
