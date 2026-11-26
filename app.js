@@ -42,11 +42,17 @@
     cropMarks: true,
     labels: true,
     overview: false,
+    calibrations: {}, // nøkkel «A4|marg» / «A4|kantlos», se applyCalibration()
   };
+  // Ekstra marg utover det kalibreringen målte (mm).
+  const CAL_BUFFER = { margin: 1, borderless: 0.5 };
+  const CAL_SCALE = { min: 0.9, max: 1.1 };
+  const SIDES = ['top', 'right', 'bottom', 'left'];
 
   const $ = (id) => document.getElementById(id);
   const fmt = (n, d = 1) => n.toLocaleString('nb-NO', { maximumFractionDigits: d, minimumFractionDigits: 0 });
   const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+  const pct = (v) => `${fmt(v * 100, 1)} %`;
 
   const state = {
     settings: loadSettings(),
@@ -66,7 +72,9 @@
       if (raw) {
         const saved = JSON.parse(raw);
         for (const k of Object.keys(DEFAULTS)) {
-          if (k === 'edges' && saved.edges && typeof saved.edges === 'object') {
+          if (k === 'calibrations') {
+            s.calibrations = cleanCalibrations(saved.calibrations);
+          } else if (k === 'edges' && saved.edges && typeof saved.edges === 'object') {
             for (const e of Object.keys(DEFAULTS.edges)) {
               if (typeof saved.edges[e] === 'boolean') s.edges[e] = saved.edges[e];
             }
@@ -78,6 +86,20 @@
     } catch (_) { /* privat modus e.l. – bruk standardverdier */ }
     if (!PAPERS[s.paper]) s.paper = DEFAULTS.paper;
     return s;
+  }
+
+  function cleanCalibrations(raw) {
+    const out = {};
+    if (!raw || typeof raw !== 'object') return out;
+    const ok = (v, lo, hi) => typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi;
+    for (const [key, c] of Object.entries(raw)) {
+      const [paper, mode] = key.split('|');
+      if (!PAPERS[paper] || (mode !== 'marg' && mode !== 'kantlos') || !c || typeof c !== 'object') continue;
+      if (!ok(c.sx, CAL_SCALE.min, CAL_SCALE.max) || !ok(c.sy, CAL_SCALE.min, CAL_SCALE.max)) continue;
+      if (!c.cut || !SIDES.every((e) => ok(c.cut[e], 0, 30))) continue;
+      out[key] = { sx: c.sx, sy: c.sy, cut: Object.fromEntries(SIDES.map((e) => [e, c.cut[e]])) };
+    }
+    return out;
   }
 
   function saveSettings() {
@@ -290,17 +312,56 @@
     return orient === 'landscape' ? { w: p.h, h: p.w } : { w: p.w, h: p.h };
   }
 
+  // ---------- Kalibrering ----------
+  // En kalibrering beskriver skriveren slik den oppfører seg med et stående ark:
+  //   sx, sy  – hvor stort skriveren faktisk skriver ut (1.008 = 0,8 % for stort)
+  //   cut     – hvor mange mm fra hver papirkant som ikke kommer med på papiret
+  // Vi antar at skriveren skalerer rundt midten av arket (slik kantløs forstørrelse gjør).
+  // Plakatsidene forhåndsskaleres med 1/sx, 1/sy rundt midten, og margen settes til cut + buffer.
+
+  const calKey = (s) => `${s.paper}|${s.borderless ? 'kantlos' : 'marg'}`;
+  const activeCalibration = (s) => s.calibrations[calKey(s)] || null;
+
+  /** Kalibreringen oversatt til en side i gitt retning: { sx, sy, cut: { t, r, b, l } }. */
+  function calibFor(s, orient) {
+    const c = activeCalibration(s);
+    if (!c) return null;
+    if (orient === 'landscape') {
+      // Liggende sider roteres av skriverdialogen, men vi vet ikke hvilken vei.
+      // Bruk derfor den største verdien av hvert motstående par.
+      const lr = Math.max(c.cut.top, c.cut.bottom);
+      const tb = Math.max(c.cut.left, c.cut.right);
+      return { sx: c.sy, sy: c.sx, cut: { t: tb, b: tb, l: lr, r: lr } };
+    }
+    return { sx: c.sx, sy: c.sy, cut: { t: c.cut.top, r: c.cut.right, b: c.cut.bottom, l: c.cut.left } };
+  }
+
   function geomFor(s, src, orient) {
     const paper = paperDims(s, orient);
-    const m = s.borderless ? 0 : s.margin;
+    const cal = calibFor(s, orient);
+    let m;
+    if (cal) {
+      const buf = s.borderless ? CAL_BUFFER.borderless : CAL_BUFFER.margin;
+      m = {};
+      for (const k of ['t', 'r', 'b', 'l']) m[k] = round1(cal.cut[k] + buf);
+    } else {
+      const v = s.borderless ? 0 : s.margin;
+      m = { t: v, r: v, b: v, l: v };
+    }
     const ov = s.overlap;
     const o = {
       l: s.edges.left ? ov : 0, r: s.edges.right ? ov : 0,
       t: s.edges.top ? ov : 0, b: s.edges.bottom ? ov : 0,
     };
-    const coreW = paper.w - 2 * m - o.l - o.r;
-    const coreH = paper.h - 2 * m - o.t - o.b;
-    const g = { orient, paper, m, o, coreW, coreH };
+    const coreW = paper.w - m.l - m.r - o.l - o.r;
+    const coreH = paper.h - m.t - m.b - o.t - o.b;
+    const g = {
+      orient, paper, m, o, coreW, coreH,
+      calibrated: !!cal,
+      // Kalibrert kantløs: bildet fortsetter ut i kanten (det som kuttes er «bleed»).
+      bleed: !!cal && s.borderless,
+      comp: cal ? { kx: 1 / cal.sx, ky: 1 / cal.sy } : null,
+    };
     if (coreW < 20 || coreH < 20) {
       return { ...g, error: 'Marg og overlapp er for store for papirstørrelsen. Reduser en av dem.' };
     }
@@ -378,35 +439,38 @@
    */
   function sheetLayout(g, c, r, s) {
     const { paper, m, o, coreW, coreH, cols, rows } = g;
-    const x0 = m + o.l;
-    const y0 = m + o.t;
+    const x0 = m.l + o.l;
+    const y0 = m.t + o.t;
     const ops = [];
 
     // Bildet: hele plakaten plassert slik at ark (c, r) sin kjerne havner i [x0, x0+coreW].
     // Klipp til kjernen + overlappsfeltene som har en nabo (ellers er feltet tomt uansett).
-    const cx1 = c > 0 ? x0 - o.l : x0;
-    const cx2 = c < cols - 1 ? x0 + coreW + o.r : x0 + coreW;
-    const cy1 = r > 0 ? y0 - o.t : y0;
-    const cy2 = r < rows - 1 ? y0 + coreH + o.b : y0 + coreH;
+    // Ved kalibrert kantløs utskrift går bildet helt ut til papirkanten.
+    const clip = g.bleed
+      ? { x: 0, y: 0, w: paper.w, h: paper.h }
+      : (() => {
+        const cx1 = c > 0 ? x0 - o.l : x0;
+        const cx2 = c < cols - 1 ? x0 + coreW + o.r : x0 + coreW;
+        const cy1 = r > 0 ? y0 - o.t : y0;
+        const cy2 = r < rows - 1 ? y0 + coreH + o.b : y0 + coreH;
+        return { x: cx1, y: cy1, w: cx2 - cx1, h: cy2 - cy1 };
+      })();
     ops.push({
-      t: 'image',
-      clip: { x: cx1, y: cy1, w: cx2 - cx1, h: cy2 - cy1 },
+      t: 'image', clip,
       x: x0 - c * coreW + g.imgX, y: y0 - r * coreH + g.imgY, w: g.posterW, h: g.posterH,
     });
 
     if (s.cropMarks) {
       const gap = 1;
-      const len = Math.min(5, m - gap);
-      if (len >= 1) {
-        const lw = 0.2;
-        for (const x of [x0, x0 + coreW]) {
-          ops.push({ t: 'line', x1: x, y1: m - gap, x2: x, y2: m - gap - len, w: lw, color: BLACK });
-          ops.push({ t: 'line', x1: x, y1: paper.h - m + gap, x2: x, y2: paper.h - m + gap + len, w: lw, color: BLACK });
-        }
-        for (const y of [y0, y0 + coreH]) {
-          ops.push({ t: 'line', x1: m - gap, y1: y, x2: m - gap - len, y2: y, w: lw, color: BLACK });
-          ops.push({ t: 'line', x1: paper.w - m + gap, y1: y, x2: paper.w - m + gap + len, y2: y, w: lw, color: BLACK });
-        }
+      const lw = 0.2;
+      const len = (mm) => Math.min(5, mm - gap);
+      for (const x of [x0, x0 + coreW]) {
+        if (len(m.t) >= 1) ops.push({ t: 'line', x1: x, y1: m.t - gap, x2: x, y2: m.t - gap - len(m.t), w: lw, color: BLACK });
+        if (len(m.b) >= 1) ops.push({ t: 'line', x1: x, y1: paper.h - m.b + gap, x2: x, y2: paper.h - m.b + gap + len(m.b), w: lw, color: BLACK });
+      }
+      for (const y of [y0, y0 + coreH]) {
+        if (len(m.l) >= 1) ops.push({ t: 'line', x1: m.l - gap, y1: y, x2: m.l - gap - len(m.l), y2: y, w: lw, color: BLACK });
+        if (len(m.r) >= 1) ops.push({ t: 'line', x1: paper.w - m.r + gap, y1: y, x2: paper.w - m.r + gap + len(m.r), y2: y, w: lw, color: BLACK });
       }
     }
 
@@ -419,27 +483,28 @@
         ops.push(labelOp(text, x0 + 3, y0 + coreH + o.b / 2 + sz * 0.36, sz));
       } else if (o.t >= 4) {
         const sz = sizeFor(o.t);
-        ops.push(labelOp(text, x0 + 3, m + o.t / 2 + sz * 0.36, sz));
+        ops.push(labelOp(text, x0 + 3, m.t + o.t / 2 + sz * 0.36, sz));
       } else if (o.r >= 4) {
         const sz = sizeFor(o.r);
         ops.push(labelOp(text, x0 + coreW + o.r / 2 + sz * 0.36, y0 + coreH - 3, sz, 90));
       } else if (o.l >= 4) {
         const sz = sizeFor(o.l);
-        ops.push(labelOp(text, m + o.l / 2 + sz * 0.36, y0 + coreH - 3, sz, 90));
-      } else if (m >= 4) {
-        const sz = sizeFor(m);
-        ops.push(labelOp(text, x0 + 8, paper.h - m / 2 + sz * 0.36, sz));
+        ops.push(labelOp(text, m.l + o.l / 2 + sz * 0.36, y0 + coreH - 3, sz, 90));
+      } else if (m.b >= 4) {
+        const sz = sizeFor(m.b);
+        ops.push(labelOp(text, x0 + 8, paper.h - m.b / 2 + sz * 0.36, sz));
       }
     }
 
     // Kun for forhåndsvisning: utskriftsområde og overlappsfelt.
+    const innerH = paper.h - m.t - m.b;
     const overlays = {
-      printable: { x: m, y: m, w: paper.w - 2 * m, h: paper.h - 2 * m },
+      printable: { x: m.l, y: m.t, w: paper.w - m.l - m.r, h: innerH },
       strips: [
-        o.t && r > 0 && { x: x0, y: m, w: coreW, h: o.t },
+        o.t && r > 0 && { x: x0, y: m.t, w: coreW, h: o.t },
         o.b && r < rows - 1 && { x: x0, y: y0 + coreH, w: coreW, h: o.b },
-        o.l && c > 0 && { x: m, y: m, w: o.l, h: paper.h - 2 * m },
-        o.r && c < cols - 1 && { x: x0 + coreW, y: m, w: o.r, h: paper.h - 2 * m },
+        o.l && c > 0 && { x: m.l, y: m.t, w: o.l, h: innerH },
+        o.r && c < cols - 1 && { x: x0 + coreW, y: m.t, w: o.r, h: innerH },
       ].filter(Boolean),
     };
     return { ops, overlays };
@@ -447,7 +512,7 @@
 
   function overviewLayout(g, s, src) {
     const { paper } = g;
-    const m = Math.max(g.m, 8);
+    const m = Math.max(g.m.t, g.m.r, g.m.b, g.m.l, 8);
     const ops = [];
     const title = `Oversikt: ${g.cols} × ${g.rows} ark (${g.sheets} ${PAPERS[s.paper].name}, ${g.orient === 'landscape' ? 'liggende' : 'stående'})`;
     const size = `Plakat: ${fmt(g.posterW / 10)} × ${fmt(g.posterH / 10)} cm · Overlapp: ${fmt(s.overlap)} mm · Fil: ${src.name}`;
@@ -489,47 +554,73 @@
   }
 
   /**
-   * Testark: skalaer fra hver papirkant og inn (0–15 mm) viser hvor mye skriveren
-   * kutter, og et kvadrat på 100 × 100 mm viser om skalaen er riktig.
+   * Testark: en «trapp» av korte streker langs hver kant, 0–15 mm inn fra kanten i
+   * steg på 0,5 mm, viser hvor mye skriveren ikke når ut til (eller kutter ved kantløs
+   * utskrift). Et kvadrat på 100 × 100 mm viser om skalaen er riktig.
+   * Med kalibrering (cal) blir arket forhåndsskalert akkurat som plakaten, slik at
+   * en ny utskrift kontrollerer kalibreringen.
    */
-  function testSheetLayout(paper, s) {
+  function testSheetLayout(paper, s, cal) {
     const ops = [];
-    const lw = 0.15;
     const cx = paper.w / 2;
     const cy = paper.h / 2;
+    const step = 0.5;
     const max = 15;
-    for (let d = 0; d <= max; d++) {
-      const len = d % 5 === 0 ? 8 : 4;
-      const p = d === 0 ? lw / 2 : d; // streken ved 0 mm ligger helt inne på arket
-      ops.push({ t: 'line', x1: cx - len / 2, y1: p, x2: cx + len / 2, y2: p, w: lw, color: BLACK }); // topp
-      ops.push({ t: 'line', x1: cx - len / 2, y1: paper.h - p, x2: cx + len / 2, y2: paper.h - p, w: lw, color: BLACK }); // bunn
-      ops.push({ t: 'line', x1: p, y1: cy - len / 2, x2: p, y2: cy + len / 2, w: lw, color: BLACK }); // venstre
-      ops.push({ t: 'line', x1: paper.w - p, y1: cy - len / 2, x2: paper.w - p, y2: cy + len / 2, w: lw, color: BLACK }); // høyre
-      if (d > 0 && d % 5 === 0) {
-        const sz = 2.2;
-        ops.push({ t: 'text', text: `${d}`, x: cx + 5, y: d + sz * 0.36, sizeMm: sz, color: BLACK });
-        ops.push({ t: 'text', text: `${d}`, x: cx + 5, y: paper.h - d + sz * 0.36, sizeMm: sz, color: BLACK });
-        ops.push({ t: 'text', text: `${d}`, x: d - 1, y: cy - 5, sizeMm: sz, color: BLACK });
-        ops.push({ t: 'text', text: `${d}`, x: paper.w - d - 1, y: cy - 5, sizeMm: sz, color: BLACK });
-      }
+    const pitch = 3.5; // avstand mellom strekene langs kanten
+    const seg = 2.6; // strekens lengde
+    const n = Math.round(max / step) + 1;
+    const span = (n - 1) * pitch;
+    const sz = 1.8;
+    const labelAt = 17.5; // avstand fra kanten til tallene
+    for (let i = 0; i < n; i++) {
+      const d = i * step;
+      const p = d === 0 ? 0.15 : d; // streken ved 0 mm ligger helt inne på arket
+      const whole = d % 1 === 0;
+      const w = whole ? 0.3 : 0.15;
+      const a = -span / 2 + i * pitch;
+      const t = `${d}`;
+      const tw = estimateTextWidth(t, sz);
+      const line = (x1, y1, x2, y2) => ops.push({ t: 'line', x1, y1, x2, y2, w, color: BLACK });
+      line(cx + a - seg / 2, p, cx + a + seg / 2, p); // topp
+      line(cx + a - seg / 2, paper.h - p, cx + a + seg / 2, paper.h - p); // bunn
+      line(p, cy + a - seg / 2, p, cy + a + seg / 2); // venstre
+      line(paper.w - p, cy + a - seg / 2, paper.w - p, cy + a + seg / 2); // høyre
+      if (!whole) continue; // halve mm har ikke tall
+      const text = (x, y) => ops.push({ t: 'text', text: t, x, y, sizeMm: sz, color: BLACK });
+      text(cx + a - tw / 2, labelAt + sz * 0.7);
+      text(cx + a - tw / 2, paper.h - labelAt);
+      text(labelAt - 1, cy + a + sz * 0.36);
+      text(paper.w - labelAt + 1 - tw, cy + a + sz * 0.36);
     }
+    const name = (text, x, y) => ops.push({ t: 'text', text, x, y, sizeMm: 2.4, bold: true, color: GREY });
+    name('Topp', cx + span / 2 + 4, labelAt + 1.7);
+    name('Bunn', cx + span / 2 + 4, paper.h - labelAt);
+    name('Venstre', labelAt - 1, cy - span / 2 - 4);
+    name('Høyre', paper.w - labelAt + 1 - estimateTextWidth('Høyre', 2.4, true), cy - span / 2 - 4);
+
     // Kvadrat på 100 × 100 mm
     const q = 100;
     const qx = cx - q / 2;
     const qy = cy - q / 2;
     ops.push({ t: 'rect', x: qx, y: qy, w: q, h: q, stroke: BLACK, lw: 0.2 });
     ops.push({ t: 'text', text: '100 × 100 mm', x: qx + 3, y: qy + 7, sizeMm: 4, bold: true, color: BLACK });
+    const status = cal
+      ? `kalibrert (skriveren: ${pct(cal.sx)} × ${pct(cal.sy)})`
+      : 'ikke kalibrert';
     const lines = [
-      `Testark (${PAPERS[s.paper].name}). Skriv ut med de samme innstillingene som plakaten.`,
-      '1. Mål kvadratet. Det skal være nøyaktig 100 mm på begge ledd.',
-      '   Er det større eller mindre, skalerer skriveren – bruk «Faktisk størrelse» / 100 %',
-      '   og slå av forstørrelse ved kantløs utskrift.',
-      '2. Se på skalaene midt på hver kant. Første synlige strek viser hvor mange mm',
-      '   skriveren ikke når ut til (eller kutter bort ved kantløs utskrift).',
-      '   Sett utskriftsmargen litt større enn dette. Kutter kantløs utskrift bort noe,',
-      '   velg overlapp på alle fire kanter.',
+      `Testark · ${PAPERS[s.paper].name} · ${s.borderless ? 'kantløs' : 'med marg'} · ${status}`,
+      'Skriv ut med de samme innstillingene som plakaten, med «Faktisk størrelse» / 100 %.',
+      '1. Mål bredden og høyden på kvadratet i mm. De skal være 100.',
+      '2. Hold arket slik at teksten er lesbar. På hver kant: finn streken nærmest kanten',
+      '   som er skrevet ut helt. Tallet ved den er hvor mange mm skriveren ikke når ut til',
+      '   (eller kutter bort ved kantløs utskrift). Tynne streker uten tall er halve mm.',
+      '3. Skriv de seks tallene inn under «Kalibrer etter testark» i Tileprint.',
+      '4. Last ned et nytt testark og skriv det ut for å kontrollere: kvadratet skal nå måle',
+      '   100 mm. Avviker det fortsatt, skriver du bare inn de nye tallene.',
     ];
-    lines.forEach((text, i) => ops.push({ t: 'text', text, x: 20, y: qy + q + 14 + i * 4.6, sizeMm: 2.8, color: GREY }));
+    lines.forEach((text, i) => ops.push({
+      t: 'text', text, x: 26, y: qy + q + 12 + i * 4.4, sizeMm: 2.7, bold: i === 0, color: i === 0 ? BLACK : GREY,
+    }));
     return ops;
   }
 
@@ -807,6 +898,15 @@
     const PH = page.getHeight();
     const P = (v) => v * MM_TO_PT;
     const col = (c) => rgb(c[0], c[1], c[2]);
+    const comp = ctx.comp;
+    if (comp) {
+      // Forhåndsskaler rundt sidens midtpunkt for å oppheve skriverens skalering.
+      const PW = page.getWidth();
+      page.pushOperators(
+        pushGraphicsState(),
+        concatTransformationMatrix(comp.kx, 0, 0, comp.ky, (PW / 2) * (1 - comp.kx), (PH / 2) * (1 - comp.ky)),
+      );
+    }
     for (const op of ops) {
       if (op.t === 'image') {
         page.pushOperators(
@@ -859,6 +959,7 @@
         }
       }
     }
+    if (comp) page.pushOperators(popGraphicsState());
   }
 
   /** Erstatter tegn som standardfonten (WinAnsi) ikke har. */
@@ -880,7 +981,7 @@
     const source = await embedSource(doc, src, PDFLib);
     const font = await doc.embedFont(PDFLib.StandardFonts.Helvetica);
     const bold = await doc.embedFont(PDFLib.StandardFonts.HelveticaBold);
-    const ctx = { PDFLib, source, font, bold };
+    const ctx = { PDFLib, source, font, bold, comp: g.comp };
     const size = [g.paper.w * MM_TO_PT, g.paper.h * MM_TO_PT];
 
     for (let r = 0; r < g.rows; r++) {
@@ -950,12 +1051,14 @@
       const bold = await doc.embedFont(PDFLib.StandardFonts.HelveticaBold);
       const paper = paperDims(state.settings, 'portrait');
       const page = doc.addPage([paper.w * MM_TO_PT, paper.h * MM_TO_PT]);
-      drawOpsPdf(page, safeText(testSheetLayout(paper, state.settings)), { PDFLib, source: null, font, bold });
+      const cal = calibFor(state.settings, 'portrait');
+      const comp = cal ? { kx: 1 / cal.sx, ky: 1 / cal.sy } : null;
+      drawOpsPdf(page, safeText(testSheetLayout(paper, state.settings, cal)), { PDFLib, source: null, font, bold, comp });
       const bytes = await doc.save();
       const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
       const a = document.createElement('a');
       a.href = url;
-      a.download = `testark-${PAPERS[state.settings.paper].name}.pdf`;
+      a.download = `testark-${PAPERS[state.settings.paper].name}${state.settings.borderless ? '-kantlos' : ''}.pdf`;
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 60000);
     } catch (err) {
@@ -1042,7 +1145,7 @@
       el.appendChild(d);
     };
     stat('Plakat', `${fmt(g.posterW / 10)} × ${fmt(g.posterH / 10)} cm`, `rutenett ${fmt(g.gridW / 10)} × ${fmt(g.gridH / 10)} cm`);
-    stat('Ark', `${g.cols} × ${g.rows} = ${g.sheets}`, `${PAPERS[state.settings.paper].name} ${g.orient === 'landscape' ? 'liggende' : 'stående'}`);
+    stat('Ark', `${g.cols} × ${g.rows} = ${g.sheets}`, `${PAPERS[state.settings.paper].name} ${g.orient === 'landscape' ? 'liggende' : 'stående'}${g.calibrated ? ' · kalibrert' : ''}`);
     if (g.dpi) {
       stat('Oppløsning', `${Math.round(g.dpi)} dpi`, g.dpi < LIMITS.lowDpi ? 'lav – kan bli uskarp' : g.dpi < 150 ? 'grei på avstand' : 'god', g.dpi < LIMITS.lowDpi ? 'low' : '');
     } else {
@@ -1073,7 +1176,8 @@
     $('fitRows').hidden = !isGrid;
     $('sizeFields').hidden = isGrid;
     $('sizeHint').hidden = isGrid;
-    $('margin').disabled = s.borderless;
+    $('margin').disabled = s.borderless || !!activeCalibration(s);
+    renderCalibration();
     $('cropMarks').disabled = s.borderless;
     $('cropMarks').closest('label').classList.toggle('disabled', s.borderless);
     $('borderlessHint').hidden = !s.borderless;
@@ -1091,6 +1195,99 @@
     }
   }
   const round1 = (v) => Math.round(v * 10) / 10;
+
+  const MARGIN_HINT = 'De fleste hjemmeskrivere klarer ikke å skrive helt ut til kanten. 5–7 mm er vanlig.';
+
+  function renderCalibration() {
+    const s = state.settings;
+    const c = activeCalibration(s);
+    const where = `${PAPERS[s.paper].name} ${s.borderless ? 'kantløs' : 'med marg'}`;
+    $('calActive').hidden = !c;
+    if (!c) {
+      $('marginHint').textContent = MARGIN_HINT;
+      return;
+    }
+    const cut = SIDES.map((e) => fmt(c.cut[e])).join(' / ');
+    const buf = s.borderless ? CAL_BUFFER.borderless : CAL_BUFFER.margin;
+    $('calText').textContent = s.borderless
+      ? `Kalibrert for ${where}: skriveren gir ${pct(c.sx)} × ${pct(c.sy)} og kutter ${cut} mm (topp / høyre / bunn / venstre). Tileprint kompenserer for skalaen og lar bildet gå helt ut i kanten, med skjøtene flyttet inn forbi det som kuttes.`
+      : `Kalibrert for ${where}: skriveren gir ${pct(c.sx)} × ${pct(c.sy)} og når ikke ut til ${cut} mm (topp / høyre / bunn / venstre). Tileprint kompenserer for skalaen.`;
+    const m = SIDES.map((e) => fmt(round1(c.cut[e] + buf))).join(' / ');
+    $('marginHint').textContent = s.borderless
+      ? MARGIN_HINT
+      : `Styres av kalibreringen: ${m} mm (topp / høyre / bunn / venstre, med ${fmt(buf)} mm ekstra). Liggende ark bruker den største verdien av hvert motstående par.`;
+  }
+
+  function calMessage(text, kind) {
+    const el = $('calMsg');
+    el.textContent = text || '';
+    el.className = `cal-msg${kind ? ` ${kind}` : ''}`;
+  }
+
+  function readRaw(id) {
+    const v = parseFloat(String($(id).value).replace(',', '.'));
+    return Number.isFinite(v) ? v : null;
+  }
+
+  /**
+   * Regner ut kalibreringen fra målingene på testarket. Testarket er laget med
+   * gjeldende kalibrering (old), så målingene beskriver avviket som er igjen:
+   *   ny skala = gammel skala × målt / 100
+   *   en strek tegnet d mm fra kanten havner c − (c − d)·r fra kanten, der c er
+   *   halve arkbredden og r = målt / 100. Det som ikke kommer med, er derfor
+   *   cut = c − (c − d)·r, regnet i de samme millimeterne som plakaten bruker.
+   */
+  function applyCalibration() {
+    const s = state.settings;
+    const w = readRaw('calW');
+    const h = readRaw('calH');
+    const d = { top: readRaw('calTop'), right: readRaw('calRight'), bottom: readRaw('calBottom'), left: readRaw('calLeft') };
+    if (w === null || h === null || SIDES.some((e) => d[e] === null)) {
+      calMessage('Fyll inn alle seks feltene.', 'err');
+      return;
+    }
+    if (w < 90 || w > 110 || h < 90 || h > 110) {
+      calMessage('Kvadratet bør måle nær 100 mm. Et så stort avvik betyr nesten alltid at utskriften skaleres. Velg «Faktisk størrelse» / 100 % i skriverdialogen og skriv ut testarket på nytt.', 'err');
+      return;
+    }
+    if (SIDES.some((e) => d[e] < 0 || d[e] > 15)) {
+      calMessage('Strekene går fra 0 til 15 mm. Ser du ingen hel strek på en kant, er margen der større enn 15 mm – da kan du ikke kalibrere med dette arket.', 'err');
+      return;
+    }
+    const old = activeCalibration(s) || { sx: 1, sy: 1 };
+    const rx = w / 100;
+    const ry = h / 100;
+    const sx = old.sx * rx;
+    const sy = old.sy * ry;
+    if (sx < CAL_SCALE.min || sx > CAL_SCALE.max || sy < CAL_SCALE.min || sy > CAL_SCALE.max) {
+      calMessage('Til sammen blir skalaavviket over 10 %. Fjern kalibreringen, sjekk skriverinnstillingene og start på nytt.', 'err');
+      return;
+    }
+    const P = paperDims(s, 'portrait');
+    const cut = (v, c, r) => round1(clamp(c - (c - v) * r, 0, 30));
+    s.calibrations[calKey(s)] = {
+      sx: Math.round(sx * 1e4) / 1e4,
+      sy: Math.round(sy * 1e4) / 1e4,
+      cut: {
+        top: cut(d.top, P.h / 2, ry), bottom: cut(d.bottom, P.h / 2, ry),
+        left: cut(d.left, P.w / 2, rx), right: cut(d.right, P.w / 2, rx),
+      },
+    };
+    for (const id of ['calW', 'calH', 'calTop', 'calRight', 'calBottom', 'calLeft']) $(id).value = '';
+    // Kantløs utskrift forstørrer normalt 1–3 %, så der varsler vi først ved 5 %.
+    const limit = s.borderless ? 0.05 : 0.02;
+    const big = Math.abs(rx - 1) > limit || Math.abs(ry - 1) > limit;
+    calMessage(
+      big
+        ? `Lagret, men avviket er stort (over ${limit * 100} %).` +
+          ' Sjekk at skriveren ikke står på «Tilpass til side». Skriv ut et nytt testark for å kontrollere.'
+        : 'Lagret. Last ned et nytt testark og skriv det ut for å kontrollere: kvadratet skal nå måle 100 mm.',
+      big ? 'warn' : '',
+    );
+    saveSettings();
+    clearDownload();
+    update();
+  }
 
   function fitRowsToImage() {
     const s = state.settings;
@@ -1173,6 +1370,12 @@
     }
     on('borderless', 'change', (e) => { s.borderless = e.target.checked; changed(); });
     on('testSheetBtn', 'click', exportTestSheet);
+    on('calApply', 'click', applyCalibration);
+    on('calClear', 'click', () => {
+      delete s.calibrations[calKey(s)];
+      calMessage('');
+      changed();
+    });
     on('cropMarks', 'change', (e) => { s.cropMarks = e.target.checked; changed(); });
     on('labels', 'change', (e) => { s.labels = e.target.checked; changed(); });
     on('overview', 'change', (e) => { s.overview = e.target.checked; changed(); });
@@ -1184,6 +1387,7 @@
 
     on('resetBtn', 'click', () => {
       const fresh = structuredClone(DEFAULTS);
+      fresh.calibrations = s.calibrations; // skriverkalibreringen er ikke en plakatinnstilling
       Object.keys(s).forEach((k) => delete s[k]);
       Object.assign(s, fresh);
       state.userSetRows = false;
@@ -1236,7 +1440,7 @@
   }
 
   // Eksponert for testing i nettleserkonsollen.
-  window.PlakatSplitter = { testSheetLayout, drawOpsPdf, safeText, getPdfLib, computeGeometry, sheetLayout, overviewLayout, orientMatrix, jpegOrientation, buildPdf, state };
+  window.PlakatSplitter = { applyCalibration, calibFor, testSheetLayout, drawOpsPdf, safeText, getPdfLib, computeGeometry, sheetLayout, overviewLayout, orientMatrix, jpegOrientation, buildPdf, state };
 
   writeInputs();
   bindInputs();

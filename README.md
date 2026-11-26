@@ -15,6 +15,7 @@ Alt skjer i nettleseren. Filen din lastes ikke opp noe sted.
 - Klippemerker, arknummer og koordinater (A1, B2 …) og valgfri oversiktsside
 - Kant-til-kant-modus for skrivere med kantløs utskrift
 - Testark for å sjekke at skriveren holder skalaen, og hvor nær kanten den skriver
+- Kalibrering etter testarket: egen marg per kant og kompensasjon for skriverens skalafeil
 - Forhåndsvisning av hele plakaten og hvert enkelt ark
 - Innstillingene huskes i nettleseren
 
@@ -27,6 +28,12 @@ Alt skjer i nettleseren. Filen din lastes ikke opp noe sted.
 5. Klipp bort margen langs klippemerkene på kantene uten overlapp, legg arket over nabo-arkets overlappsfelt og lim.
 
 Usikker på skriveren? Skriv ut testarket først. Kvadratet skal måle nøyaktig 100 × 100 mm.
+
+### Kalibrering
+
+Under **Kalibrer etter testark** kan du skrive inn hva du målte på testarket: kvadratets bredde og høyde, og den første hele streken på hver kant. Tileprint setter da en egen marg for hver kant (det skriveren ikke når ut til, pluss 1 mm) og forhåndsskalerer sidene slik at skriverens skalafeil oppheves. Ved kantløs utskrift brukes målingene til å flytte skjøtene inn forbi det skriveren kutter, mens bildet fortsatt går helt ut i kanten.
+
+Skriv ut et nytt testark etter kalibreringen for å kontrollere den. Det nye arket er skalert på samme måte som plakaten, så kvadratet skal nå måle 100 mm. Er det fortsatt et lite avvik, skriver du bare inn de nye tallene. Kalibreringen lagres i nettleseren, én per papirstørrelse med og uten kantløs utskrift, og blir med når du tilbakestiller de andre innstillingene.
 
 ### Kantløs utskrift
 

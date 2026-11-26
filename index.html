@@ -49,13 +49,46 @@
             </select>
           </label>
         </div>
+        <label class="check"><input type="checkbox" id="borderless"> Kant til kant (uten marg)</label>
+        <small id="borderlessHint" hidden>For skrivere med kantløs utskrift. Velg kantløs papirstørrelse og fotopapir i skriverdialogen, og slå av forstørrelse («Behold størrelse» / minste utvidelse). Da trenger du ikke klippe: legg arkene rett over overlappen. Skriv ut testarket først.</small>
         <label class="field">
           <span>Utskriftsmarg (mm)</span>
           <input type="number" id="margin" min="0" max="30" step="0.5" inputmode="decimal">
-          <small>De fleste hjemmeskrivere klarer ikke å skrive helt ut til kanten. 5–7 mm er vanlig.</small>
+          <small id="marginHint">De fleste hjemmeskrivere klarer ikke å skrive helt ut til kanten. 5–7 mm er vanlig.</small>
         </label>
-        <label class="check"><input type="checkbox" id="borderless"> Kant til kant (uten marg)</label>
-        <small id="borderlessHint" hidden>For skrivere med kantløs utskrift. Velg kantløs papirstørrelse og fotopapir i skriverdialogen, og slå av forstørrelse («Behold størrelse» / minste utvidelse). Da trenger du ikke klippe: legg arkene rett over overlappen. Skriv ut testarket først.</small>
+        <div id="calActive" class="cal-active" hidden>
+          <p id="calText"></p>
+          <button type="button" id="calClear" class="link-btn">Fjern kalibreringen</button>
+        </div>
+        <details class="calib" id="calib">
+          <summary>Kalibrer etter testark</summary>
+          <ol class="calib-steps">
+            <li><button type="button" id="testSheetBtn" class="link-btn inline">Last ned testark</button> og skriv det ut med de samme innstillingene som plakaten.</li>
+            <li>Mål kvadratet, og finn streken nærmest kanten som er skrevet ut helt, på hver side. Hold arket slik at teksten er lesbar.</li>
+          </ol>
+          <div class="row">
+            <label class="field">
+              <span>Kvadrat, bredde (mm)</span>
+              <input type="number" id="calW" min="90" max="110" step="0.1" inputmode="decimal" placeholder="100">
+            </label>
+            <label class="field">
+              <span>Kvadrat, høyde (mm)</span>
+              <input type="number" id="calH" min="90" max="110" step="0.1" inputmode="decimal" placeholder="100">
+            </label>
+          </div>
+          <fieldset class="cal-edges">
+            <legend>Første hele strek (mm)</legend>
+            <div class="row">
+              <label class="field"><span>Topp</span><input type="number" id="calTop" min="0" max="15" step="0.5" inputmode="decimal"></label>
+              <label class="field"><span>Høyre</span><input type="number" id="calRight" min="0" max="15" step="0.5" inputmode="decimal"></label>
+              <label class="field"><span>Bunn</span><input type="number" id="calBottom" min="0" max="15" step="0.5" inputmode="decimal"></label>
+              <label class="field"><span>Venstre</span><input type="number" id="calLeft" min="0" max="15" step="0.5" inputmode="decimal"></label>
+            </div>
+          </fieldset>
+          <button type="button" id="calApply" class="secondary">Bruk kalibrering</button>
+          <p id="calMsg" class="cal-msg" role="status" aria-live="polite"></p>
+          <small>Kalibreringen lagres i nettleseren, én for hver papirstørrelse, med og uten kantløs utskrift. Bruk tallene fra det siste testarket du lastet ned.</small>
+        </details>
       </section>
 
       <section class="group">
@@ -111,7 +144,6 @@
         <button type="button" id="exportBtn" class="primary" disabled>Lag PDF</button>
         <p id="status" class="status" role="status" aria-live="polite"></p>
         <p class="hint"><strong>Skriv ut med «Faktisk størrelse» / 100 %</strong> – ikke «Tilpass til side», ellers blir målene feil.</p>
-        <button type="button" id="testSheetBtn" class="link-btn">Last ned testark (sjekk skala og kanter)</button>
         <button type="button" id="resetBtn" class="link-btn">Tilbakestill innstillinger</button>
       </section>
     </aside>

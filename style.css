@@ -191,6 +191,27 @@ button { font: inherit; cursor: pointer; }
 
 .status { min-height: 1.4em; margin: 10px 0 6px; font-size: 0.88rem; }
 .status a { color: var(--accent); font-weight: 600; }
+.cal-active {
+  background: var(--accent-soft); border-radius: 7px; padding: 8px 10px; margin: 0 0 8px;
+  font-size: 0.82rem; line-height: 1.4;
+}
+.cal-active p { margin: 0 0 4px; }
+.cal-active .link-btn { margin: 0; }
+.calib { margin: 4px 0 0; font-size: 0.88rem; }
+.calib summary { cursor: pointer; font-weight: 600; color: var(--accent); }
+.calib[open] summary { margin-bottom: 8px; }
+.calib-steps { margin: 0 0 10px; padding-left: 20px; font-size: 0.82rem; color: var(--muted); line-height: 1.45; }
+.link-btn.inline { margin: 0; padding: 0; font-size: inherit; }
+.cal-edges { border: 0; padding: 0; margin: 0; }
+.cal-edges legend { font-weight: 600; font-size: 0.85rem; margin-bottom: 6px; padding: 0; }
+.secondary {
+  width: 100%; background: var(--surface-2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; font-weight: 600;
+}
+.secondary:hover { border-color: var(--accent); }
+.cal-msg { min-height: 1.2em; margin: 8px 0 4px; font-size: 0.82rem; line-height: 1.4; }
+.cal-msg.err { color: var(--error-text); }
+.cal-msg.warn { color: var(--warn-text); }
 .hint { font-size: 0.82rem; color: var(--muted); margin: 6px 0 10px; }
 .hint strong { color: var(--text); }
 
